@@ -11,6 +11,8 @@ import numpy as np
 # Importar nossos módulos
 from thermal_core import calculate_cpu_temperatures
 from materials import MATERIALS, CONVECTION, CPU_PRESETS, HEATSINK_PRESETS
+from sim_2d_conduction import run_2d_simulation
+from sim_side_view import run_side_view_simulation
 
 # Configuração da página
 st.set_page_config(
@@ -116,7 +118,7 @@ heatsink_params = {
 
 # Executar cálculo
 result = calculate_cpu_temperatures(power, T_ambient, die_area, die_thickness, 
-                                   die_k, layers, heatsink_params)
+                                   die_k, layers, heatsink_params, verbose=True)
 
 # === RESULTADOS PRINCIPAIS ===
 st.header("📊 Resultados")
@@ -208,6 +210,112 @@ with st.expander("📋 Informações Técnicas"):
     st.write("**Configuração da Pilha:**")
     for layer in layers:
         st.write(f"- {layer['name']}: {layer['thickness']*1e6:.0f} μm, k = {layer['k']} W/m·K")
+
+# === PASSO-A-PASSO DOS CÁLCULOS ===
+with st.expander("🧾 Cálculos (Passo a passo)"):
+    trace = result.get('trace', None)
+    if trace:
+        # Mostrar todo o trace como bloco de código para fácil cópia
+        st.code("\n".join(trace), language='text')
+    else:
+        st.write("Nenhum detalhe passo-a-passo disponível.")
+
+# === SIMULAÇÃO 2D (PROTÓTIPO) ===
+st.header("🧪 Simulação 2D - Condução (Protótipo)")
+with st.expander("Configurar simulação 2D"):
+    sim_nx = st.slider('Resolução X (nx)', 40, 240, 120)
+    sim_ny = st.slider('Resolução Y (ny)', 40, 240, 120)
+    sim_Lx = st.number_input('Largura do domínio (m)', value=0.06)
+    sim_Ly = st.number_input('Altura do domínio (m)', value=0.06)
+    sim_fin_height = st.number_input('Altura das aletas (m)', value=fin_height * 1e-3)
+
+if st.button('▶️ Rodar simulação 2D'):
+    params = {
+        'n_fins': n_fins,
+        'fin_thickness': fin_thickness * 1e-3,
+        'fin_height': sim_fin_height,
+        'base_width': base_size * 1e-3,
+        'base_height': 0.01,
+        'k_al': heatsink_k,
+        'k_die': die_k,
+        'die_width': np.sqrt(die_area),
+        'die_height': np.sqrt(die_area),
+        'die_thickness': die_thickness,
+        'h': h
+    }
+    with st.spinner('Rodando simulação 2D (pode demorar alguns segundos)...'):
+        try:
+            img_bytes = run_2d_simulation(power_w=power, T_amb=T_ambient,
+                                         nx=sim_nx, ny=sim_ny, Lx=sim_Lx, Ly=sim_Ly,
+                                         params=params)
+            st.image(img_bytes, caption='Mapa de Temperatura (2D)', use_column_width=True)
+        except Exception as e:
+            st.error(f'Erro ao rodar simulação: {e}')
+
+# === VISTA LATERAL (SEÇÃO TRANSVERSAL) ===
+st.header("🔎 Vista Lateral - Seção Transversal (simplificada)")
+with st.expander("Configurar vista lateral e modelo de convecção"):
+    side_nx = st.slider('Resolução Lateral (nx)', 40, 240, 120)
+    side_ny = st.slider('Resolução Vertical (ny)', 80, 320, 160)
+    side_Lx = st.number_input('Largura do domínio lateral (m)', value=base_size * 1e-3)
+    side_Ly = st.number_input('Altura do domínio (m)', value=fin_height * 1e-3 + 0.02)
+    airflow_mode = st.selectbox('Modelo de convecção:', ['velocity', 'h_manual'], index=0)
+    if airflow_mode == 'velocity':
+        air_U = st.slider('Velocidade do ar U (m/s):', 0.0, 10.0, 2.0, 0.1)
+    else:
+        air_h_manual = st.number_input('Coeficiente convectivo h (W/m²K):', value=20.0)
+
+if st.button('▶️ Rodar vista lateral'):
+    # preparar parâmetros para sim_side_view
+    side_params = {
+        'die_width': np.sqrt(die_area),
+        'die_thickness': die_thickness,
+        'tim_thickness': tim_thickness_val,
+        'spreader_thickness': 2e-3,
+        'base_thickness': 3e-3,
+        'fin_height': fin_height * 1e-3,
+        'fin_thickness': fin_thickness * 1e-3,
+        'n_fins': n_fins,
+        'base_width': base_size * 1e-3,
+        'k_tim': tim_k,
+        'k_die': die_k,
+        'k_al': heatsink_k,
+        'k_cu': MATERIALS['spreader'].get(spreader_material, 390)
+    }
+
+    airflow = {'mode': airflow_mode}
+    if airflow_mode == 'velocity':
+        airflow['U'] = air_U
+    else:
+        airflow['h'] = air_h_manual
+
+    with st.spinner('Rodando vista lateral (pode demorar)...'):
+        try:
+            img_side, side_summary = run_side_view_simulation(power_w=power, T_amb=T_ambient,
+                                                             nx=side_nx, ny=side_ny,
+                                                             Lx=side_Lx, Ly=side_Ly,
+                                                             params=side_params,
+                                                             airflow=airflow)
+            st.image(img_side, caption='Vista Lateral - Mapa de Temperatura', use_column_width=True)
+
+            # Mostrar resumo
+            st.subheader('Resumo - Vista Lateral')
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric('h estimado (W/m²K)', f"{side_summary['h']:.1f}")
+            with col2:
+                st.metric('T máx (°C)', f"{side_summary['T_max']:.1f}")
+            with col3:
+                tcenter = side_summary.get('T_center_die', None)
+                st.metric('T média no die (°C)', f"{tcenter:.1f}" if tcenter is not None else 'N/A')
+
+            with st.expander('Detalhes da estimativa de convecção'):
+                st.write(side_summary.get('h_details', {}))
+
+            st.info('Modelo simplificado: correlações 1D/2D — para análise detalhada de mecânica dos fluidos use um solver CFD (ex.: OpenFOAM).')
+
+        except Exception as e:
+            st.error(f'Erro na vista lateral: {e}')
 
 # === COMPARAÇÃO RÁPIDA ===
 st.subheader("⚖️ Comparação Rápida")
