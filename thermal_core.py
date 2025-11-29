@@ -36,7 +36,7 @@ def r_conv(h_w_m2k, area_m2):
     """
     return 1.0 / (h_w_m2k * area_m2)
 
-def fin_efficiency_rectangular(h, k_fin, thickness, width, height):
+def fin_efficiency_rectangular(h, k_fin, thickness, width, height, trace=None):
     """
     Calcula eficiência de aleta retangular (ponta adiabática)
     
@@ -56,20 +56,25 @@ def fin_efficiency_rectangular(h, k_fin, thickness, width, height):
     
     # Parâmetro m da aleta
     if A_c == 0 or k_fin == 0:
+        if trace is not None:
+            trace.append(f"A_c={A_c:.4e} m² ou k_fin={k_fin} inválido → eta_f=1.0")
         return 1.0, A_c, P
-    
+
     m = math.sqrt(h * P / (k_fin * A_c))
-    
+
     # Eficiência (ponta adiabática)
     if m * height == 0:
         eta_f = 1.0
     else:
         eta_f = math.tanh(m * height) / (m * height)
-    
+
+    if trace is not None:
+        trace.append(f"A_c={A_c:.4e} m², P={P:.4e} m; m={m:.4e} 1/m; m*h={m*height:.4e}; eta_f={eta_f:.4f}")
+
     return eta_f, A_c, P
 
 def heatsink_thermal_resistance(h, k_fin, fin_thickness, fin_width, fin_height, 
-                               n_fins, base_length, base_width):
+                               n_fins, base_length, base_width, trace=None):
     """
     Calcula resistência térmica total do dissipador com aletas
     
@@ -96,7 +101,7 @@ def heatsink_thermal_resistance(h, k_fin, fin_thickness, fin_width, fin_height,
     A_base_exposed = max(A_base_total - A_fins_footprint, 0.0)
     
     # Eficiência das aletas
-    eta_f, A_c, P = fin_efficiency_rectangular(h, k_fin, fin_thickness, fin_width, fin_height)
+    eta_f, A_c, P = fin_efficiency_rectangular(h, k_fin, fin_thickness, fin_width, fin_height, trace=trace)
     
     # Área de convecção de uma aleta (2 faces + ponta)
     A_fin_single = 2 * fin_width * fin_height + fin_thickness * fin_width
@@ -104,9 +109,14 @@ def heatsink_thermal_resistance(h, k_fin, fin_thickness, fin_width, fin_height,
     
     # Área efetiva total para convecção
     A_eff = A_base_exposed + eta_f * A_fins_total
-    
+
     # Resistência térmica de convecção
     R_conv = 1.0 / (h * A_eff) if A_eff > 0 else float('inf')
+
+    if trace is not None:
+        trace.append(f"A_base_total={A_base_total:.4e} m²; A_base_exposed={A_base_exposed:.4e} m²")
+        trace.append(f"A_fin_single={A_fin_single:.4e} m²; A_fins_total={A_fins_total:.4e} m²; A_eff={A_eff:.4e} m²")
+        trace.append(f"h={h} W/m²K → R_conv=1/(h*A_eff)={R_conv:.4e} K/W")
     
     # Detalhes para análise
     details = {
@@ -122,7 +132,7 @@ def heatsink_thermal_resistance(h, k_fin, fin_thickness, fin_width, fin_height,
     return R_conv, details
 
 def calculate_cpu_temperatures(power_w, T_ambient, die_area, die_thickness, die_k,
-                              layers, heatsink_params):
+                              layers, heatsink_params, verbose=False):
     """
     Calcula temperaturas na pilha térmica da CPU
     
@@ -139,8 +149,14 @@ def calculate_cpu_temperatures(power_w, T_ambient, die_area, die_thickness, die_
         dict com resultados completos
     """
     
+    # Preparar trace opcional
+    trace = [] if verbose else None
+
     # Resistência térmica do dissipador (convecção + aletas)
-    R_heatsink, hs_details = heatsink_thermal_resistance(**heatsink_params)
+    R_heatsink, hs_details = heatsink_thermal_resistance(trace=trace, **heatsink_params)
+
+    if trace is not None:
+        trace.append(f"Resistência do dissipador (convecção + aletas): R_heatsink={R_heatsink:.4e} K/W")
     
     # Resistências das camadas (de cima para baixo na pilha)
     R_total = R_heatsink
@@ -151,13 +167,20 @@ def calculate_cpu_temperatures(power_w, T_ambient, die_area, die_thickness, die_
         R_layer = r_cond(layer['thickness'], layer['k'], layer['area'])
         R_total += R_layer
         R_breakdown.append((layer['name'], R_layer))
+        if trace is not None:
+            trace.append(f"{layer['name']}: R = L/(k*A) = {layer['thickness']:.4e}/({layer['k']}*{layer['area']:.4e}) = {R_layer:.4e} K/W")
     
     # Temperatura na superfície do die
     T_die_surface = T_ambient + power_w * R_total
+    if trace is not None:
+        trace.append(f"T_die_surface = T_amb + P*R_total = {T_ambient} + {power_w}*{R_total:.4e} = {T_die_surface:.4f} °C")
     
     # Geração interna no die (modelo de placa com geração uniforme)
     q_dot = power_w / (die_area * die_thickness)  # W/m³
     delta_T_generation = q_dot * die_thickness**2 / (8.0 * die_k)
+    if trace is not None:
+        trace.append(f"q_dot = P/(A*L) = {power_w}/({die_area:.4e}*{die_thickness:.4e}) = {q_dot:.4e} W/m³")
+        trace.append(f"ΔT (geração) = q_dot*L²/(8*k) = {q_dot:.4e}*{die_thickness:.4e}²/(8*{die_k}) = {delta_T_generation:.4e} K")
     
     # Temperatura de junção (centro do die)
     T_junction = T_die_surface + delta_T_generation
@@ -175,6 +198,9 @@ def calculate_cpu_temperatures(power_w, T_ambient, die_area, die_thickness, die_
         'q_dot': q_dot
     }
     
+    if trace is not None:
+        results['trace'] = trace
+
     return results
 
 # Função de teste rápido
