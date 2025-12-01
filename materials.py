@@ -42,6 +42,11 @@ MATERIALS = {
 }
 
 # Coeficientes de convecção típicos (W/m²·K)
+
+###################################
+#adicionar opcao custom onde o usuario pode inserir o valor desejado
+###################################
+
 CONVECTION = {
     'Convecção natural': 8,
     'Ventilador muito baixo (600 RPM)': 25,
@@ -184,3 +189,93 @@ if __name__ == "__main__":
     for cpu in CPU_PRESETS:
         preset = CPU_PRESETS[cpu]
         print(f"   {cpu}: {preset['power']}W - {preset['description']}")
+
+        # --- FLUIDOS DE REFRIGERAÇÃO ---
+FLUIDS = {
+    'Água Destilada': {
+        'density': 997,     # kg/m³ @ 25°C
+        'viscosity': 8.9e-4, # Pa·s @ 25°C
+        'specific_heat': 4182, # J/kg·K @ 25°C
+        'thermal_conductivity': 0.607, # W/m·K @ 25°C
+        'description': 'Água pura, boa capacidade térmica.'
+    },
+    'Mistura 50/50 Etilenoglicol': {
+        'density': 1065,
+        'viscosity': 2.5e-3,
+        'specific_heat': 3500,
+        'thermal_conductivity': 0.40,
+        'description': 'Mistura comum para anticongelante e anticorrosão.'
+    }
+    # Adicionar mais fluidos conforme necessário
+}
+
+# --- PRESETS DE BOMBAS ---
+# Curva de desempenho: lista de (vazao_m3_s, pressao_pa)
+PUMP_PRESETS = {
+    'Bomba D5 (Padrão)': {
+        'default_rpm': 2400,
+        'curve_data': [
+            (0.0, 40000),      # Ponto de bloqueio (vazão 0, pressão máxima)
+            (0.00005, 35000),  # ~3 L/min @ 35 kPa
+            (0.0001, 25000),   # ~6 L/min @ 25 kPa
+            (0.00015, 10000),  # ~9 L/min @ 10 kPa
+            (0.0002, 0)        # Ponto de vazão livre (pressão 0, vazão máxima)
+        ],
+        'description': 'Bomba D5 comum, boa vazão e pressão.'
+    },
+    'Bomba DDC (Compacta)': {
+        'default_rpm': 2800,
+        'curve_data': [
+            (0.0, 50000),
+            (0.00003, 45000),
+            (0.00006, 30000),
+            (0.00009, 10000),
+            (0.00012, 0)
+        ],
+        'description': 'Bomba DDC, alta pressão para seu tamanho.'
+    }
+}
+
+# --- PRESETS DE RADIADORES ---
+RADIATOR_PRESETS = {
+    'Radiador 120mm (Básico)': {
+        'size_mm': 120,
+        'default_fan_rpm': 1800,
+        'thermal_resistance_factor': 0.05, # Fator simplificado para R_rad (K/W)
+        'fan_static_pressure_mmh2o': 1.5, # Exemplo de pressão estática típica
+        'description': 'Radiador pequeno, para setups compactos.'
+    },
+    'Radiador 240mm (Médio)': {
+        'size_mm': 240,
+        'default_fan_rpm': 2000,
+        'thermal_resistance_factor': 0.03,
+        'fan_static_pressure_mmh2o': 2.0,
+        'description': 'Radiador de tamanho médio, bom equilíbrio.'
+    },
+    'Radiador 360mm (Performance)': {
+        'size_mm': 360,
+        'default_fan_rpm': 2200,
+        'thermal_resistance_factor': 0.02,
+        'fan_static_pressure_mmh2o': 2.5,
+        'description': 'Radiador grande, alta capacidade de dissipação.'
+    }
+}
+
+# --- PRESETS DE BLOCOS DA CPU (simplificado por enquanto) ---
+CPU_BLOCK_PRESETS = {
+    'Microcanais Padrão': {
+        'num_microchannels': 50,
+        'microchannel_width_m': 0.4e-3, # 0.4 mm
+        'microchannel_height_m': 1.5e-3, # 1.5 mm
+        'block_length_m': 0.04, # Comprimento efetivo dos canais no bloco (40mm)
+        'description': 'Design comum de microcanais.'
+    }
+}
+
+# --- COEFICIENTES DE PERDA MENORES (K_L) ---
+MINOR_LOSS_COEFFICIENTS = {
+    'bend_90deg': 0.7, # Curva de 90 graus (valor típico)
+    'entrance': 0.5,   # Entrada em um componente
+    'exit': 1.0,       # Saída de um componente
+    'fitting': 0.2     # Conectores/acessórios
+}
