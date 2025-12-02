@@ -459,8 +459,66 @@ with st.expander("📋 Informações Técnicas"):
 # === PASSO-A-PASSO DOS CÁLCULOS ===
 with st.expander("🧾 Cálculos (Passo a passo)"):
     trace = result.get('trace', None)
+    # opção para forçar fundo escuro no bloco de trace (útil se o tema do Streamlit não propagar)
+    force_dark_trace = st.checkbox('Forçar fundo escuro para o passo-a-passo', value=False)
+
     if trace:
-        st.code("\n".join(trace), language='text')
+        # Renderizar trace como tabela estilizada para melhor leitura
+        # Se o usuário escolher forçar fundo escuro, aplicamos estilo inline para garantir contraste
+        if force_dark_trace:
+            div_style = "background:#071328;color:#dbeefc;padding:8px;border-radius:8px;"
+            row_even = "background: rgba(255,255,255,0.01);"
+            row_odd = "background: transparent;"
+        else:
+            div_style = ""
+            row_even = "background:#fbfbfb;"
+            row_odd = "background:#ffffff;"
+
+        html = """
+        <style>
+        /* Caixa do trace: estilo neutro com detecção do tema do Streamlit via html[data-theme] */
+        .trace-table { width:100%; border-collapse:collapse; font-family: monospace; font-size:13px; }
+        .trace-table th { text-align:left; padding:8px 6px; border-bottom:1px solid rgba(0,0,0,0.08); }
+        .trace-table td { padding:8px 6px; border-bottom:1px solid rgba(0,0,0,0.04); vertical-align:top; }
+        .trace-box { max-height:360px; overflow:auto; padding:8px; border-radius:8px; }
+
+        /* Tema claro (streamlit data-theme='light' ou padrão) */
+        html[data-theme='light'] .trace-box,
+        html:not([data-theme]) .trace-box { background: #ffffff; color:#0b1220; box-shadow: 0 1px 4px rgba(16,24,40,0.06); }
+        html[data-theme='light'] .trace-table tr:nth-child(even), html:not([data-theme]) .trace-table tr:nth-child(even) { background:#fbfbfb; }
+
+        /* Tema escuro (streamlit data-theme='dark') */
+        html[data-theme='dark'] .trace-box { background: #071328; color: #dbeefc; box-shadow: none; border: 1px solid rgba(255,255,255,0.04); }
+        html[data-theme='dark'] .trace-table th { border-bottom-color: rgba(255,255,255,0.06); }
+        html[data-theme='dark'] .trace-table td { border-bottom-color: rgba(255,255,255,0.03); }
+        html[data-theme='dark'] .trace-table tr:nth-child(even) { background: rgba(255,255,255,0.01); }
+        </style>
+        <div class='trace-box'>
+          <table class='trace-table'>
+            <thead><tr><th style='width:56px'>Passo</th><th>Descrição</th></tr></thead>
+            <tbody>
+        """
+
+        for i, line in enumerate(trace):
+            # escapar tags HTML somente por segurança
+            safe_line = str(line).replace("<", "&lt;").replace(">", "&gt;")
+            # escolher cor da linha conforme preferência do usuário
+            row_bg = row_odd if i % 2 == 0 else row_even
+            html += f"<tr style='{row_bg}'><td><strong>{i+1}</strong></td><td>{safe_line}</td></tr>"
+
+        html += "</tbody></table></div>"
+
+        # injetar o estilo e, se necessário, aplicar o estilo inline ao div
+        if force_dark_trace:
+            # substituir a abertura da div por uma com style inline (garante prioridade)
+            html = html.replace("<div class='trace-box'>", f"<div class='trace-box' style='{div_style}'>")
+        st.markdown(html, unsafe_allow_html=True)
+
+        # Fornecer opção para baixar o trace bruto e ver raw
+        raw_text = "\n".join(trace)
+        st.download_button("📥 Baixar trace (texto)", data=raw_text, file_name="calculos_trace.txt", mime="text/plain")
+        with st.expander('Ver raw (copiar)'):
+            st.code(raw_text, language='text')
     else:
         st.write("Nenhum detalhe passo-a-passo disponível.")
 
