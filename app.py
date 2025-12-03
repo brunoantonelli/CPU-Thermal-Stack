@@ -6,6 +6,7 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
+import streamlit.components.v1 as components
 
 # Importar nossos módulos
 from thermal_core import calculate_thermal_performance, convert_pressure, convert_flow_rate
@@ -480,7 +481,8 @@ with st.expander("🧾 Cálculos (Passo a passo)"):
         .trace-table { width:100%; border-collapse:collapse; font-family: monospace; font-size:13px; }
         .trace-table th { text-align:left; padding:8px 6px; border-bottom:1px solid rgba(0,0,0,0.08); }
         .trace-table td { padding:8px 6px; border-bottom:1px solid rgba(0,0,0,0.04); vertical-align:top; }
-        .trace-box { max-height:360px; overflow:auto; padding:8px; border-radius:8px; }
+        /* Removido limite interno de altura: deixamos o iframe controlar a altura externa */
+        .trace-box { max-height: none; overflow:auto; padding:8px; border-radius:8px; }
 
         /* Tema claro (streamlit data-theme='light' ou padrão) */
         html[data-theme='light'] .trace-box,
@@ -512,7 +514,15 @@ with st.expander("🧾 Cálculos (Passo a passo)"):
         if force_dark_trace:
             # substituir a abertura da div por uma com style inline (garante prioridade)
             html = html.replace("<div class='trace-box'>", f"<div class='trace-box' style='{div_style}'>")
-        st.markdown(html, unsafe_allow_html=True)
+        # Renderizar o HTML do trace usando um componente (iframe) para garantir que o HTML seja interpretado
+        # A altura do iframe é maior quando o tipo de resfriamento é Air Cooler (pedido do usuário)
+        if cooling_type == 'Air Cooler':
+            # Caixa maior para exibir mais linhas sem necessidade de rolagem imediata
+            height_px = min(1000, 120 + len(trace) * 32)
+        else:
+            # Altura padrão para outros modos
+            height_px = min(600, 40 + len(trace) * 28)
+        components.html(html, height=height_px, scrolling=True)
 
         # Fornecer opção para baixar o trace bruto e ver raw
         raw_text = "\n".join(trace)
