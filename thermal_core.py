@@ -9,6 +9,30 @@ import numpy as np
 from materials import MATERIALS, FLUIDS, PUMP_PRESETS, RADIATOR_PRESETS, CPU_BLOCK_PRESETS, MINOR_LOSS_COEFFICIENTS
 from scipy.interpolate import interp1d # Adicione esta linha
 
+
+def _fmt_num(v):
+    try:
+        fv = float(v)
+    except Exception:
+        return str(v)
+    if fv == 0:
+        return "0"
+    # Mostrar em notação fixa quando legível, senão científica
+    if 0.01 <= abs(fv) < 1000:
+        return f"{fv:.4f}"
+    return f"{fv:.4e}"
+
+
+def _trace_text(trace, text):
+    if trace is not None:
+        trace.append(text)
+
+
+def _trace_val(trace, label, formula, value, unit=''):
+    if trace is not None:
+        unit_str = f" {unit}" if unit else ""
+        trace.append(f"{label}: {formula} = {_fmt_num(value)}{unit_str}")
+
 def r_cond(thickness_m, k_w_mk, area_m2):
     """
     Calcula resistência térmica de condução
@@ -191,31 +215,32 @@ def find_operating_point(pump_curve_data, circuit_resistance_func, max_flow_rate
     """
     pump_flow_rates_m3_s = np.array([p[0] for p in pump_curve_data])
     pump_pressures_pa = np.array([p[1] for p in pump_curve_data])
-    
+
     # Cria uma função de interpolação para a curva da bomba
     pump_curve_interp = interp1d(pump_flow_rates_m3_s, pump_pressures_pa, kind='linear', fill_value="extrapolate")
-    
+
     # Função objetivo: diferença entre a pressão da bomba e a pressão do circuito
     def objective_function(flow_rate):
-        if flow_rate < 0: return 1e12 # Penaliza vazões negativas
-        
+        if flow_rate < 0:
+            return 1e12  # Penaliza vazões negativas
+
         # Garante que a vazão esteja dentro do domínio da interpolação da bomba
         flow_rate = np.clip(flow_rate, pump_flow_rates_m3_s.min(), pump_flow_rates_m3_s.max())
-        
+
         pump_pressure = pump_curve_interp(flow_rate)
         circuit_pressure = circuit_resistance_func(flow_rate)
         return pump_pressure - circuit_pressure
-    
+
     # Busca pela vazão onde a função objetivo é zero (ponto de operação)
     # Podemos usar um método de busca de raiz, mas para simplificar, uma busca em um grid
-    flow_rates_test = np.linspace(0, max_flow_rate_guess, 200) # Testar 200 pontos
+    flow_rates_test = np.linspace(0, max_flow_rate_guess, 200)  # Testar 200 pontos
     diffs = [objective_function(q) for q in flow_rates_test]
-    
+
     # Encontrar o ponto onde a diferença é mínima (mais próxima de zero)
     idx = np.argmin(np.abs(diffs))
     operating_flow_rate = flow_rates_test[idx]
-    operating_pressure = pump_curve_interp(operating_flow_rate) # Pressão no ponto de operação
-    
+    operating_pressure = pump_curve_interp(operating_flow_rate)  # Pressão no ponto de operação
+
     return operating_flow_rate, operating_pressure
 
 def calculate_cpu_block_h(flow_rate_m3_s, fluid_props, cpu_block_params):
@@ -306,9 +331,8 @@ def calculate_watercooler_temperatures(power_w, T_ambient, die_area, die_thickne
         pump_params['curve_data'], circuit_resistance_func
     )
     
-    if trace is not None:
-        trace.append(f"Vazão de operação: {convert_flow_rate(operating_flow_rate_m3_s, 'm³/s', 'L/min'):.2f} L/min")
-        trace.append(f"Queda de pressão total: {convert_pressure(operating_pressure_pa, 'Pa', 'bar'):.2f} bar")
+    _trace_val(trace, "Ponto de operação - Vazão", "Q (L/min)", convert_flow_rate(operating_flow_rate_m3_s, 'm³/s', 'L/min'), 'L/min')
+    _trace_val(trace, "Ponto de operação - Pressão", "Δp (bar)", convert_pressure(operating_pressure_pa, 'Pa', 'bar'), 'bar')
 
     # 4. Calcular o coeficiente de convecção (h) no bloco da CPU
     h_cpu_block = calculate_cpu_block_h(operating_flow_rate_m3_s, fluid_props, cpu_block_params)
@@ -325,16 +349,14 @@ def calculate_watercooler_temperatures(power_w, T_ambient, die_area, die_thickne
     
     R_conv_cpu_block = r_conv(h_cpu_block, A_convec_block)
     
-    if trace is not None:
-        trace.append(f"h_cpu_block: {h_cpu_block:.1f} W/m²K")
-        trace.append(f"A_convec_block: {A_convec_block:.4e} m²")
-        trace.append(f"R_conv_cpu_block: {R_conv_cpu_block:.4e} K/W")
+    _trace_val(trace, "h no bloco", "h_cpu_block (W/m²K)", h_cpu_block, 'W/m²K')
+    _trace_val(trace, "Área de convecção do bloco", "A_convec_block (m²)", A_convec_block, 'm²')
+    _trace_val(trace, "R_conv do bloco", "1/(h*A)", R_conv_cpu_block, 'K/W')
 
     # 6. Calcular a resistência térmica do radiador (do fluido para o ambiente)
     R_radiator_thermal = calculate_radiator_thermal_resistance(radiator_params, fluid_props, operating_flow_rate_m3_s, T_ambient)
     
-    if trace is not None:
-        trace.append(f"R_radiator_thermal: {R_radiator_thermal:.4e} K/W")
+    _trace_val(trace, "Radiador (resistência térmica)", "R_radiator_thermal", R_radiator_thermal, 'K/W')
 
     # 7. Balanço de energia para o fluido (para encontrar T_fluid_avg)
     # Q_cpu = power_w
@@ -342,8 +364,7 @@ def calculate_watercooler_temperatures(power_w, T_ambient, die_area, die_thickne
     # Em regime estacionário, Q_cpu = Q_radiator
     T_fluid_avg = T_ambient + power_w * R_radiator_thermal
     
-    if trace is not None:
-        trace.append(f"T_fluid_avg = T_ambient + P * R_radiator = {T_ambient} + {power_w} * {R_radiator_thermal:.4e} = {T_fluid_avg:.1f} °C")
+    _trace_val(trace, "Temperatura média do fluido", "T_amb + P * R_radiator", T_fluid_avg, '°C')
 
     # 8. Resistências das camadas (do die até o fluido no bloco)
     R_total_internal_stack = 0
@@ -358,16 +379,14 @@ def calculate_watercooler_temperatures(power_w, T_ambient, die_area, die_thickne
     R_total_internal_stack += R_cond_block_base
     R_breakdown.append(('Bloco da CPU (Condução)', R_cond_block_base))
     
-    if trace is not None:
-        trace.append(f"R_cond_block_base: {R_cond_block_base:.4e} K/W")
+    _trace_val(trace, "R_cond do bloco (base)", "L/(k*A)", R_cond_block_base, 'K/W')
 
     # Somar resistências das camadas (TIM, spreader)
-    for layer in reversed(layers): # layers já deve vir sem a base do dissipador a ar
+    for layer in reversed(layers):  # layers já deve vir sem a base do dissipador a ar
         R_layer = r_cond(layer['thickness'], layer['k'], layer['area'])
         R_total_internal_stack += R_layer
         R_breakdown.append((layer['name'], R_layer))
-        if trace is not None:
-            trace.append(f"{layer['name']}: R = {R_layer:.4e} K/W")
+        _trace_val(trace, layer['name'], f"R = L/(k*A) [L={layer['thickness']}, k={layer['k']}, A={layer['area']}]", R_layer, 'K/W')
 
     # Adicionar a resistência de convecção do bloco da CPU para o fluido
     R_total_internal_stack += R_conv_cpu_block
@@ -375,15 +394,13 @@ def calculate_watercooler_temperatures(power_w, T_ambient, die_area, die_thickne
 
     # 9. Temperatura da superfície do die
     T_die_surface = T_fluid_avg + power_w * R_total_internal_stack
-    if trace is not None:
-        trace.append(f"T_die_surface = T_fluid_avg + P * R_internal_stack = {T_fluid_avg:.1f} + {power_w} * {R_total_internal_stack:.4e} = {T_die_surface:.1f} °C")
+    _trace_val(trace, "T_die_surface", "T_fluid_avg + P * R_internal_stack", T_die_surface, '°C')
 
     # 10. Geração interna no die
     q_dot = power_w / (die_area * die_thickness)
     delta_T_generation = q_dot * die_thickness**2 / (8.0 * die_k)
-    if trace is not None:
-        trace.append(f"q_dot = {q_dot:.4e} W/m³")
-        trace.append(f"ΔT (geração) = {delta_T_generation:.4e} K")
+    _trace_val(trace, "q_dot (densidade de potência)", "P/(A*L)", q_dot, 'W/m³')
+    _trace_val(trace, "ΔT por geração interna", "q·L²/(8*k)", delta_T_generation, 'K')
     
     # 11. Temperatura de junção (centro do die)
     T_junction = T_die_surface + delta_T_generation
@@ -433,8 +450,7 @@ def fin_efficiency_rectangular(h, k_fin, thickness, width, height, trace=None):
     
     # Parâmetro m da aleta
     if A_c == 0 or k_fin == 0:
-        if trace is not None:
-            trace.append(f"A_c={A_c:.4e} m² ou k_fin={k_fin} inválido → eta_f=1.0")
+        _trace_text(trace, f"Cálculo da aleta: A_c (área da seção transversal) = {A_c:.4e} m² ou k_fin={k_fin} inválido → assumindo eta_f=1.0 (aleta considerada ideal)")
         return 1.0, A_c, P
 
     m = math.sqrt(h * P / (k_fin * A_c))
@@ -445,8 +461,14 @@ def fin_efficiency_rectangular(h, k_fin, thickness, width, height, trace=None):
     else:
         eta_f = math.tanh(m * height) / (m * height)
 
+    # Mensagens descritivas para o trace (explicando cada termo)
     if trace is not None:
-        trace.append(f"A_c={A_c:.4e} m², P={P:.4e} m; m={m:.4e} 1/m; m*h={m*height:.4e}; eta_f={eta_f:.4f}")
+        _trace_text(trace, "Cálculo da eficiência da aleta (retangular):")
+        _trace_text(trace, f" - A_c = thickness * width = {thickness:.4e} * {width:.4e} = {_fmt_num(A_c)} m²  (área da seção transversal da aleta)")
+        _trace_text(trace, f" - P = 2*(thickness + width) = {_fmt_num(P)} m  (perímetro molhado usado no balanço de condução)")
+        _trace_text(trace, f" - Parâmetro m = sqrt(h * P / (k_fin * A_c)) = {_fmt_num(m)} 1/m")
+        _trace_text(trace, f" - Produto m*height = {_fmt_num(m*height)} (adimensional)")
+        _trace_text(trace, f" - Eficiência da aleta η_f = tanh(m*height)/(m*height) = {_fmt_num(eta_f)}  (quanto mais próximo de 1, mais eficiente)")
 
     return eta_f, A_c, P
 
@@ -491,9 +513,12 @@ def heatsink_thermal_resistance(h, k_fin, fin_thickness, fin_width, fin_height,
     R_conv = 1.0 / (h * A_eff) if A_eff > 0 else float('inf')
 
     if trace is not None:
-        trace.append(f"A_base_total={A_base_total:.4e} m²; A_base_exposed={A_base_exposed:.4e} m²")
-        trace.append(f"A_fin_single={A_fin_single:.4e} m²; A_fins_total={A_fins_total:.4e} m²; A_eff={A_eff:.4e} m²")
-        trace.append(f"h={h} W/m²K → R_conv=1/(h*A_eff)={R_conv:.4e} K/W")
+        _trace_text(trace, "Cálculo do dissipador e área efetiva para convecção:")
+        _trace_text(trace, f" - Área da base total = base_length * base_width = {_fmt_num(A_base_total)} m²")
+        _trace_text(trace, f" - Área da base exposta (entre aletas) = {_fmt_num(A_base_exposed)} m²  (contribuição direta da base à convecção)")
+        _trace_text(trace, f" - Área de uma aleta (2 faces + ponta) = {_fmt_num(A_fin_single)} m²; Área total das aletas = {_fmt_num(A_fins_total)} m²")
+        _trace_text(trace, f" - Área efetiva A_eff = A_base_exposed + η_f * A_fins_total = {_fmt_num(A_eff)} m²  (área que efetivamente troca calor com o ar considerando eficiência das aletas)")
+        _trace_text(trace, f" - Convecção: h = {_fmt_num(h)} W/m²K → R_conv = 1/(h * A_eff) = {_fmt_num(R_conv)} K/W  (resistência convectiva do conjunto dissipador->ar)")
     
     # Detalhes para análise
     details = {
@@ -534,8 +559,13 @@ def calculate_air_cooler_temperatures(power_w, T_ambient, die_area, die_thicknes
     # Resistência térmica do dissipador (convecção + aletas)
     R_heatsink, hs_details = heatsink_thermal_resistance(trace=trace, **heatsink_params)
 
-    if trace is not None:
-        trace.append(f"Resistência do dissipador (convecção + aletas): R_heatsink={R_heatsink:.4e} K/W")
+    _trace_val(trace, "Dissipador (convecção+aletas)", "R_heatsink", R_heatsink, 'K/W')
+    # Detalhes do dissipador para o trace
+    if trace is not None and hs_details:
+        _trace_val(trace, "Eficiência da aleta (eta_f)", "eta_f", hs_details.get('eta_f', float('nan')))
+        _trace_val(trace, "Área efetiva para convecção (A_eff)", "A_eff (m²)", hs_details.get('A_eff', float('nan')), 'm²')
+        _trace_val(trace, "Área total das aletas (A_fins_total)", "A_fins_total (m²)", hs_details.get('A_fins_total', float('nan')), 'm²')
+        _trace_val(trace, "Área da base exposta (A_base_exposed)", "A_base_exposed (m²)", hs_details.get('A_base_exposed', float('nan')), 'm²')
     
     # Resistências das camadas (de cima para baixo na pilha)
     R_total = R_heatsink
@@ -546,23 +576,31 @@ def calculate_air_cooler_temperatures(power_w, T_ambient, die_area, die_thicknes
         R_layer = r_cond(layer['thickness'], layer['k'], layer['area'])
         R_total += R_layer
         R_breakdown.append((layer['name'], R_layer))
-        if trace is not None:
-            trace.append(f"{layer['name']}: R = L/(k*A) = {layer['thickness']:.4e}/({layer['k']}*{layer['area']:.4e}) = {R_layer:.4e} K/W")
+        _trace_val(trace, layer['name'], f"R = L/(k*A) [L={_fmt_num(layer['thickness'])}, k={layer['k']}, A={_fmt_num(layer['area'])}]", R_layer, 'K/W')
     
     # Temperatura na superfície do die
     T_die_surface = T_ambient + power_w * R_total
-    if trace is not None:
-        trace.append(f"T_die_surface = T_amb + P*R_total = {T_ambient} + {power_w}*{R_total:.4e} = {T_die_surface:.4f} °C")
+    _trace_val(trace, "T_die_surface", "T_amb + P * R_total", T_die_surface, '°C')
     
     # Geração interna no die (modelo de placa com geração uniforme)
     q_dot = power_w / (die_area * die_thickness)  # W/m³
     delta_T_generation = q_dot * die_thickness**2 / (8.0 * die_k)
-    if trace is not None:
-        trace.append(f"q_dot = P/(A*L) = {power_w}/({die_area:.4e}*{die_thickness:.4e}) = {q_dot:.4e} W/m³")
-        trace.append(f"ΔT (geração) = q_dot*L²/(8*k) = {q_dot:.4e}*{die_thickness:.4e}²/(8*{die_k}) = {delta_T_generation:.4e} K")
+    _trace_val(trace, "q_dot (densidade de potência)", "P/(A*L)", q_dot, 'W/m³')
+    _trace_text(trace, f"ΔT (geração) = q_dot * L² / (8*k) -> q_dot={_fmt_num(q_dot)}; L={_fmt_num(die_thickness)}; k={die_k} => ΔT={_fmt_num(delta_T_generation)} K")
     
     # Temperatura de junção (centro do die)
     T_junction = T_die_surface + delta_T_generation
+
+    # Resumo percentual de contribuições de resistência
+    if trace is not None:
+        _trace_text(trace, "\nContribuição percentual de cada resistência (em relação a R_total):")
+        rb = list(reversed(R_breakdown))
+        for name, resistance in rb:
+            try:
+                percentage = 100.0 * resistance / R_total
+            except Exception:
+                percentage = float('nan')
+            _trace_text(trace, f" - {name}: {_fmt_num(resistance)} K/W ({_fmt_num(percentage)}%)")
     
     # Resultados organizados
     results = {
